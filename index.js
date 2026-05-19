@@ -10,7 +10,10 @@ const OWNER_ID = process.env.OWNER_CHAT_ID;
 
 // ── LLAMAR A GOOGLE SHEETS ───────────────────────────
 async function sheets(accion, datos = {}) {
-  const res = await axios.post(SHEETS_URL, { accion, ...datos });
+  const res = await axios.post(SHEETS_URL, { accion, ...datos }, {
+    maxRedirects: 5,
+    timeout: 15000
+  });
   return res.data;
 }
 
@@ -108,7 +111,7 @@ async function procesarMensaje(texto) {
   const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
+    model: "gemini-2.0-flash",
     systemInstruction: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
 Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
 Fecha y hora actual: ${ahora}.

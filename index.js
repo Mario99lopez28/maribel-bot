@@ -1,4 +1,3 @@
-require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cron = require('node-cron');

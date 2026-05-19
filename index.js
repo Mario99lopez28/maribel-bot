@@ -1,16 +1,13 @@
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
-const Anthropic = require('@anthropic-ai/sdk');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const cron = require('node-cron');
 const axios = require('axios');
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
-const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const SHEETS_URL = process.env.SHEETS_URL;
 const OWNER_ID = process.env.OWNER_CHAT_ID;
-
-// ── HISTORIAL DE CONVERSACIÓN ────────────────────────
-const historial = [];
 
 // ── LLAMAR A GOOGLE SHEETS ───────────────────────────
 async function sheets(accion, datos = {}) {
@@ -18,54 +15,56 @@ async function sheets(accion, datos = {}) {
   return res.data;
 }
 
-// ── HERRAMIENTAS QUE USA CLAUDE ──────────────────────
-const tools = [
-  {
-    name: "agregar_evento",
-    description: "Agrega un evento con fecha y hora a la agenda",
-    input_schema: {
-      type: "object",
-      properties: {
-        descripcion: { type: "string", description: "Descripción del evento" },
-        fechaHora:   { type: "string", description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00" }
-      },
-      required: ["descripcion", "fechaHora"]
-    }
-  },
-  {
-    name: "agregar_tarea",
-    description: "Agrega una tarea sin hora fija",
-    input_schema: {
-      type: "object",
-      properties: {
-        descripcion: { type: "string", description: "Descripción de la tarea" },
-        fecha: { type: "string", description: "Fecha opcional en formato YYYY-MM-DD" }
-      },
-      required: ["descripcion"]
-    }
-  },
-  {
-    name: "ver_agenda",
-    description: "Muestra los próximos eventos y tareas pendientes",
-    input_schema: {
-      type: "object",
-      properties: {
-        dias: { type: "number", description: "Cuántos días hacia adelante mostrar, default 7" }
+// ── HERRAMIENTAS QUE USA GEMINI ──────────────────────
+const tools = [{
+  functionDeclarations: [
+    {
+      name: "agregar_evento",
+      description: "Agrega un evento con fecha y hora a la agenda",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          descripcion: { type: "STRING", description: "Descripción del evento" },
+          fechaHora:   { type: "STRING", description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00" }
+        },
+        required: ["descripcion", "fechaHora"]
+      }
+    },
+    {
+      name: "agregar_tarea",
+      description: "Agrega una tarea sin hora fija",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          descripcion: { type: "STRING", description: "Descripción de la tarea" },
+          fecha: { type: "STRING", description: "Fecha opcional YYYY-MM-DD" }
+        },
+        required: ["descripcion"]
+      }
+    },
+    {
+      name: "ver_agenda",
+      description: "Muestra los próximos eventos y tareas pendientes",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          dias: { type: "NUMBER", description: "Cuántos días hacia adelante, default 7" }
+        }
+      }
+    },
+    {
+      name: "completar_evento",
+      description: "Marca un evento o tarea como completado",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          id: { type: "STRING", description: "ID del evento, ej: EVT-A1B2C3D4" }
+        },
+        required: ["id"]
       }
     }
-  },
-  {
-    name: "completar_evento",
-    description: "Marca un evento o tarea como completado",
-    input_schema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "ID del evento, ej: EVT-A1B2C3D4" }
-      },
-      required: ["id"]
-    }
-  }
-];
+  ]
+}];
 
 // ── EJECUTAR HERRAMIENTA ─────────────────────────────
 async function ejecutarTool(nombre, input) {
@@ -103,52 +102,51 @@ async function ejecutarTool(nombre, input) {
   }
 }
 
-// ── PROCESAR MENSAJE CON CLAUDE ──────────────────────
+// ── PROCESAR MENSAJE CON GEMINI ──────────────────────
+const historialChat = [];
+
 async function procesarMensaje(texto) {
-  historial.push({ role: "user", content: texto });
-  if (historial.length > 20) historial.splice(0, 2);
+  const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
 
-  let mensajes = [...historial];
-
-  while (true) {
-    const response = await claude.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
+  const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    systemInstruction: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
 Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
-Fecha y hora actual: ${new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' })}.
+Fecha y hora actual: ${ahora}.
 Cuando el usuario quiera agendar algo, usá las herramientas.
 Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
-      tools,
-      messages: mensajes
-    });
+    tools
+  });
 
-    if (response.stop_reason === "end_turn") {
-      const texto = response.content.find(b => b.type === "text")?.text || "Listo!";
-      historial.push({ role: "assistant", content: response.content });
-      return texto;
-    }
+  const chat = model.startChat({ history: historialChat });
+  let result = await chat.sendMessage(texto);
+  let response = result.response;
 
-    if (response.stop_reason === "tool_use") {
-      historial.push({ role: "assistant", content: response.content });
-      mensajes = [...historial];
+  // Loop para manejar tool calls
+  while (response.functionCalls && response.functionCalls().length > 0) {
+    const calls = response.functionCalls();
+    const resultados = [];
 
-      const resultados = [];
-      for (const bloque of response.content) {
-        if (bloque.type === "tool_use") {
-          const resultado = await ejecutarTool(bloque.name, bloque.input);
-          resultados.push({
-            type: "tool_result",
-            tool_use_id: bloque.id,
-            content: resultado
-          });
+    for (const call of calls) {
+      const resultado = await ejecutarTool(call.name, call.args);
+      resultados.push({
+        functionResponse: {
+          name: call.name,
+          response: { result: resultado }
         }
-      }
-
-      historial.push({ role: "user", content: resultados });
-      mensajes = [...historial];
+      });
     }
+
+    result = await chat.sendMessage(resultados);
+    response = result.response;
   }
+
+  // Guardar en historial
+  historialChat.push({ role: "user", parts: [{ text: texto }] });
+  historialChat.push({ role: "model", parts: [{ text: response.text() }] });
+  if (historialChat.length > 20) historialChat.splice(0, 2);
+
+  return response.text();
 }
 
 // ── ESCUCHAR MENSAJES TELEGRAM ───────────────────────

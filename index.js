@@ -10,17 +10,21 @@ const OWNER_ID = process.env.OWNER_CHAT_ID;
 
 // ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
-    const params = new URLSearchParams();
-    params.append('accion', accion);
-    if (Object.keys(datos).length > 0) {
-        params.append('data', JSON.stringify(datos));
-    }
-    const url = `${SHEETS_URL}?${params.toString()}`;
-    const res = await axios.get(url, { maxRedirects: 10, timeout: 15000 });
-    if (typeof res.data === 'string') {
-        try { return JSON.parse(res.data); } catch (e) { return { error: res.data }; }
-    }
-    return res.data;
+  const body = JSON.stringify({ accion, ...datos });
+  
+  const res = await fetch(SHEETS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body,
+    redirect: 'follow'
+  });
+  
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch(e) {
+    return { error: 'Respuesta inválida: ' + text.substring(0, 100) };
+  }
 }
 
 // ── HERRAMIENTAS QUE USA GEMINI ──────────────────────

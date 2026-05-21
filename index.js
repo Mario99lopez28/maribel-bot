@@ -8,12 +8,18 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const SHEETS_URL = process.env.SHEETS_URL;
 const OWNER_ID = process.env.OWNER_CHAT_ID;
 
-// ── LLAMAR A GOOGLE SHEETS ───────────────────────────
+// ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
-  const res = await axios.post(SHEETS_URL, { accion, ...datos }, {
-    maxRedirects: 5,
-    timeout: 15000
-  });
+  const params = new URLSearchParams();
+  params.append('accion', accion);
+  if (Object.keys(datos).length > 0) {
+    params.append('data', JSON.stringify(datos));
+  }
+  const url = `${SHEETS_URL}?${params.toString()}`;
+  const res = await axios.get(url, { maxRedirects: 10, timeout: 15000 });
+  if (typeof res.data === 'string') {
+    try { return JSON.parse(res.data); } catch(e) { return { error: res.data }; }
+  }
   return res.data;
 }
 
@@ -90,7 +96,7 @@ async function ejecutarTool(nombre, input) {
 
   if (nombre === "ver_agenda") {
     const r = await sheets("listar", { dias: input.dias || 7 });
-    if (!r.ok || r.eventos.length === 0) return "📭 No hay eventos ni tareas pendientes.";
+    if (!r.ok || !r.eventos || r.eventos.length === 0) return "📭 No hay eventos ni tareas pendientes.";
     return r.eventos.map(e => {
       const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
       const icono = e.tipo === "tarea" ? "📌" : "📅";
@@ -124,7 +130,6 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
   let result = await chat.sendMessage(texto);
   let response = result.response;
 
-  // Loop para manejar tool calls
   while (response.functionCalls && response.functionCalls().length > 0) {
     const calls = response.functionCalls();
     const resultados = [];
@@ -143,7 +148,6 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
     response = result.response;
   }
 
-  // Guardar en historial
   historialChat.push({ role: "user", parts: [{ text: texto }] });
   historialChat.push({ role: "model", parts: [{ text: response.text() }] });
   if (historialChat.length > 20) historialChat.splice(0, 2);
@@ -173,7 +177,7 @@ cron.schedule('0 8 * * *', async () => {
     const r = await sheets("listar", { dias: 7 });
     if (!r.ok) return;
 
-    if (r.eventos.length === 0) {
+    if (!r.eventos || r.eventos.length === 0) {
       await bot.sendMessage(OWNER_ID, "☀️ *Buenos días!*\n\nNo tenés nada agendado para los próximos 7 días. Día libre! 🎉", { parse_mode: 'Markdown' });
       return;
     }
@@ -197,7 +201,7 @@ cron.schedule('0 8 * * *', async () => {
 cron.schedule('* * * * *', async () => {
   try {
     const r = await sheets("recordatorios");
-    if (!r.ok || r.pendientes.length === 0) return;
+    if (!r.ok || !r.pendientes || r.pendientes.length === 0) return;
 
     for (const evt of r.pendientes) {
       const fecha = new Date(evt.fechaHora).toLocaleString('es-AR');

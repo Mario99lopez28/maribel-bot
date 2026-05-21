@@ -130,7 +130,7 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
   let result = await chat.sendMessage(texto);
   let response = result.response;
 
-  while (response.functionCalls && response.functionCalls().length > 0) {
+  while (response.functionCalls && typeof response.functionCalls === 'function' && response.functionCalls()?.length > 0) {
     const calls = response.functionCalls();
     const resultados = [];
 

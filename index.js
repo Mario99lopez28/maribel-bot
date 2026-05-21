@@ -117,7 +117,7 @@ async function procesarMensaje(texto) {
     const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
 
     const model = genAI.getGenerativeModel({
-        model: "gemini-2.0-flash-lite",
+        model: "gemini-2.5-flash",,
         systemInstruction: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
 Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
 Fecha y hora actual: ${ahora}.

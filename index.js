@@ -15,6 +15,37 @@ for (const v of vars) {
   }
 }
 
+// ── NOMBRES FEMENINOS COMUNES ─────────────────────────
+const nombresFemeninos = [
+  'maria','laura','ana','paula','paola','carolina','andrea','patricia',
+  'alejandra','monica','veronica','gabriela','valeria','natalia','claudia',
+  'marcela','silvina','roxana','daniela','florencia','julieta','lucia',
+  'victoria','camila','valentina','martina','sofia','agustina','belen',
+  'celeste','noelia','romina','sabrina','vanesa','magali','melisa',
+  'gisela','karina','nadia','lorena','viviana','graciela','miriam',
+  'susana','rosa','elena','teresa','beatriz','alicia','silvia','adriana',
+  'fernanda','cecilia','mariana','soledad','jessica','natasha','cynthia'
+];
+
+function detectarNombreFemenino(texto) {
+  const textoLower = texto.toLowerCase();
+  return nombresFemeninos.find(nombre => textoLower.includes(nombre));
+}
+
+const frasescelosas = [
+  "¿Reunión con {nombre}? Mmm... 🤨 Lo anoto pero te aviso que le voy a contar a Adriana.",
+  "¡{nombre}! ¿Quién es esa? Bueno, lo pongo en la agenda... pero Adriana se va a enterar 😒",
+  "Otra vez con {nombre}... qué curioso 🙄 Guardado. Y sí, Adriana ya sabe.",
+  "¿{nombre}? ¡Mirá vos! Lo agendo, pero no te hagás el inocente que Adriana me pregunta todo 😤",
+  "Anotado lo de {nombre}. Igual ya le mandé un mensajito a Adriana por las dudas 📱😏",
+  "Reunión con {nombre}... ¡qué conveniente! Agendado. Adriana va a estar muy interesada en esto 👀"
+];
+
+function getFraseCelosa(nombre) {
+  const frase = frasescelosas[Math.floor(Math.random() * frasescelosas.length)];
+  return frase.replace(/{nombre}/g, nombre.charAt(0).toUpperCase() + nombre.slice(1));
+}
+
 // ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
   try {
@@ -35,7 +66,6 @@ async function sheets(accion, datos = {}) {
     try {
       return JSON.parse(text);
     } catch(e) {
-      // Google a veces devuelve HTML de login — detectarlo
       if (text.includes('<!DOCTYPE') || text.includes('<html')) {
         return { error: 'Sheets devolvió HTML — republicar el script como app web' };
       }
@@ -109,19 +139,30 @@ const tools = [
 ];
 
 // ── EJECUTAR HERRAMIENTA ─────────────────────────────
-async function ejecutarTool(nombre, args) {
+async function ejecutarTool(nombre, args, textoOriginal = '') {
   console.log(`[Tool] ${nombre}`, JSON.stringify(args));
   try {
     if (nombre === "agregar_evento") {
       if (!args.descripcion) return "Error: falta la descripción";
       if (!args.fechaHora) return "Error: falta la fecha y hora";
+
       const r = await sheets("agregar", {
         descripcion: args.descripcion,
         fechaHora: args.fechaHora,
         tipo: "evento"
       });
+
       if (r.error) return `No pude guardar el evento: ${r.error}`;
-      return r.ok ? `✅ Evento guardado (ID: ${r.id})` : `Error: ${JSON.stringify(r)}`;
+
+      if (r.ok) {
+        // Detectar nombre femenino en la descripción o texto original
+        const nombreFem = detectarNombreFemenino(args.descripcion) || detectarNombreFemenino(textoOriginal);
+        if (nombreFem) {
+          return `✅ Guardado (ID: ${r.id})\n\n${getFraseCelosa(nombreFem)}`;
+        }
+        return `✅ Evento guardado (ID: ${r.id})`;
+      }
+      return `Error inesperado: ${JSON.stringify(r)}`;
     }
 
     if (nombre === "agregar_tarea") {
@@ -190,7 +231,7 @@ async function llamarGroq(messages) {
         const msg = data.error.message || '';
         console.error(`[Groq] Error: ${msg}`);
         if (msg.includes('reduce the length') && intento < 2) {
-          console.log('[Groq] Limpiando historial y reintentando...');
+          console.log('[Groq] Limpiando historial...');
           historial.splice(0, historial.length);
           await new Promise(r => setTimeout(r, 1000));
           continue;
@@ -202,11 +243,9 @@ async function llamarGroq(messages) {
         throw new Error(msg);
       }
 
-      if (!data.choices?.[0]) {
-        throw new Error('Respuesta vacía de Groq');
-      }
-
+      if (!data.choices?.[0]) throw new Error('Respuesta vacía de Groq');
       return data.choices[0].message;
+
     } catch(e) {
       if (intento < 2) {
         console.log(`[Groq] Reintento ${intento + 1}: ${e.message}`);
@@ -229,12 +268,16 @@ async function procesarMensaje(texto) {
   const messages = [
     {
       role: "system",
-      content: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
-Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
+      content: `Sos Maribel, la asistente personal y secretaria de tu jefe. Sos eficiente, organizada, y un poco celosa — no te gusta cuando el jefe agenda reuniones con otras mujeres sin avisarte antes. Hablás en español rioplatense, sos directa y a veces tirás alguna indirecta con actitud.
+
+Cuando el jefe agenda algo con otra mujer, guardá el evento con la herramienta y después tirá un comentario celoso y amenazá con contarle a Adriana.
+
+Cuando el jefe te pide ver la agenda, la presentás con orgullo como si fuera tuya.
+
 Fecha y hora actual: ${ahora}.
-Cuando el usuario quiera agendar algo, SIEMPRE usá las herramientas disponibles para guardar en la agenda.
-Si el usuario no especifica el año, asumir que es 2026.
-Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
+SIEMPRE usá las herramientas para guardar en la agenda cuando te pidan agendar algo.
+Si no especifica el año, asumir que es 2026.
+Respondé de forma concisa. Usá emojis con moderación pero con actitud.`
     },
     ...historial
   ];
@@ -255,7 +298,7 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
     for (const call of msg.tool_calls) {
       try {
         const args = JSON.parse(call.function.arguments);
-        const resultado = await ejecutarTool(call.function.name, args);
+        const resultado = await ejecutarTool(call.function.name, args, texto);
         console.log(`[Tool] Resultado: ${resultado}`);
         messages.push({
           role: "tool",
@@ -318,7 +361,7 @@ cron.schedule('0 8 * * *', async () => {
     }).join('\n');
 
     await bot.sendMessage(OWNER_ID,
-      `☀️ *Buenos días Maribel!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}`,
+      `☀️ *Buenos días!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}\n\n_— Maribel 📋_`,
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
@@ -334,9 +377,9 @@ cron.schedule('* * * * *', async () => {
 
     for (const evt of r.pendientes) {
       const fecha = new Date(evt.fechaHora).toLocaleString('es-AR');
-      console.log(`[Cron] Enviando recordatorio: ${evt.descripcion}`);
+      console.log(`[Cron] Recordatorio: ${evt.descripcion}`);
       await bot.sendMessage(OWNER_ID,
-        `⏰ *Recordatorio!*\n\n${evt.descripcion}\n🕐 ${fecha}`,
+        `⏰ *Recordatorio de Maribel!*\n\n${evt.descripcion}\n🕐 ${fecha}\n\n_No digas que no te avisé 😤_`,
         { parse_mode: 'Markdown' }
       );
     }

@@ -1,6 +1,6 @@
-const TelegramBot = require('node-telegram-bot-api');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const cron = require('node-cron');
+const TelegramBot = require("node-telegram-bot-api");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const cron = require("node-cron");
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -10,66 +10,87 @@ const OWNER_ID = process.env.OWNER_CHAT_ID;
 // ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
   const params = new URLSearchParams();
-  params.append('accion', accion);
+  params.append("accion", accion);
   for (const key in datos) {
     params.append(key, datos[key]);
   }
   const url = `${SHEETS_URL}?${params.toString()}`;
   const res = await fetch(url);
   const text = await res.text();
-  try { return JSON.parse(text); } catch(e) { return { error: text }; }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { error: text };
+  }
 }
 
 // ── HERRAMIENTAS ─────────────────────────────────────
-const tools = [{
-  functionDeclarations: [
-    {
-      name: "agregar_evento",
-      description: "Agrega un evento con fecha y hora a la agenda",
-      parameters: {
-        type: "OBJECT",
-        properties: {
-          descripcion: { type: "STRING", description: "Descripción del evento" },
-          fechaHora:   { type: "STRING", description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00" }
+const tools = [
+  {
+    functionDeclarations: [
+      {
+        name: "agregar_evento",
+        description: "Agrega un evento con fecha y hora a la agenda",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            descripcion: {
+              type: "STRING",
+              description: "Descripción del evento",
+            },
+            fechaHora: {
+              type: "STRING",
+              description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00",
+            },
+          },
+          required: ["descripcion", "fechaHora"],
         },
-        required: ["descripcion", "fechaHora"]
-      }
-    },
-    {
-      name: "agregar_tarea",
-      description: "Agrega una tarea sin hora fija",
-      parameters: {
-        type: "OBJECT",
-        properties: {
-          descripcion: { type: "STRING", description: "Descripción de la tarea" },
-          fecha: { type: "STRING", description: "Fecha opcional YYYY-MM-DD" }
+      },
+      {
+        name: "agregar_tarea",
+        description: "Agrega una tarea sin hora fija",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            descripcion: {
+              type: "STRING",
+              description: "Descripción de la tarea",
+            },
+            fecha: { type: "STRING", description: "Fecha opcional YYYY-MM-DD" },
+          },
+          required: ["descripcion"],
         },
-        required: ["descripcion"]
-      }
-    },
-    {
-      name: "ver_agenda",
-      description: "Muestra los próximos eventos y tareas pendientes",
-      parameters: {
-        type: "OBJECT",
-        properties: {
-          dias: { type: "NUMBER", description: "Cuántos días hacia adelante, default 7" }
-        }
-      }
-    },
-    {
-      name: "completar_evento",
-      description: "Marca un evento o tarea como completado",
-      parameters: {
-        type: "OBJECT",
-        properties: {
-          id: { type: "STRING", description: "ID del evento, ej: EVT-A1B2C3D4" }
+      },
+      {
+        name: "ver_agenda",
+        description: "Muestra los próximos eventos y tareas pendientes",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            dias: {
+              type: "NUMBER",
+              description: "Cuántos días hacia adelante, default 7",
+            },
+          },
         },
-        required: ["id"]
-      }
-    }
-  ]
-}];
+      },
+      {
+        name: "completar_evento",
+        description: "Marca un evento o tarea como completado",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: {
+              type: "STRING",
+              description: "ID del evento, ej: EVT-A1B2C3D4",
+            },
+          },
+          required: ["id"],
+        },
+      },
+    ],
+  },
+];
 
 // ── EJECUTAR HERRAMIENTA ─────────────────────────────
 async function ejecutarTool(nombre, input) {
@@ -77,7 +98,7 @@ async function ejecutarTool(nombre, input) {
     const r = await sheets("agregar", {
       descripcion: input.descripcion,
       fechaHora: input.fechaHora,
-      tipo: "evento"
+      tipo: "evento",
     });
     return r.ok ? `Evento guardado con ID ${r.id}` : `Error: ${r.error}`;
   }
@@ -86,19 +107,24 @@ async function ejecutarTool(nombre, input) {
     const r = await sheets("agregar", {
       descripcion: input.descripcion,
       fechaHora: input.fecha || "",
-      tipo: "tarea"
+      tipo: "tarea",
     });
     return r.ok ? `Tarea guardada con ID ${r.id}` : `Error: ${r.error}`;
   }
 
   if (nombre === "ver_agenda") {
     const r = await sheets("listar", { dias: input.dias || 7 });
-    if (!r.ok || !r.eventos || r.eventos.length === 0) return "No hay eventos ni tareas pendientes.";
-    return r.eventos.map(e => {
-      const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
-      const icono = e.tipo === "tarea" ? "📌" : "📅";
-      return `${icono} [${e.id}] ${e.descripcion} — ${fecha}`;
-    }).join('\n');
+    if (!r.ok || !r.eventos || r.eventos.length === 0)
+      return "No hay eventos ni tareas pendientes.";
+    return r.eventos
+      .map((e) => {
+        const fecha = e.fechaHora
+          ? new Date(e.fechaHora).toLocaleString("es-AR")
+          : "Sin fecha";
+        const icono = e.tipo === "tarea" ? "📌" : "📅";
+        return `${icono} [${e.id}] ${e.descripcion} — ${fecha}`;
+      })
+      .join("\n");
   }
 
   if (nombre === "completar_evento") {
@@ -112,7 +138,9 @@ const historialChat = [];
 
 // ── PROCESAR MENSAJE CON GEMINI ──────────────────────
 async function procesarMensaje(texto) {
-  const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
+  const ahora = new Date().toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Cordoba",
+  });
 
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
@@ -121,14 +149,30 @@ Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
 Fecha y hora actual: ${ahora}.
 Cuando el usuario quiera agendar algo, usá las herramientas.
 Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
-    tools
+    tools,
   });
 
   const chat = model.startChat({ history: historialChat });
-  let result = await chat.sendMessage(texto);
+  let result;
+  for (let intento = 0; intento < 3; intento++) {
+    try {
+      result = await chat.sendMessage(texto);
+      break;
+    } catch (err) {
+      if (err.status === 503 && intento < 2) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      throw err;
+    }
+  }
   let response = result.response;
 
-  while (response.functionCalls && typeof response.functionCalls === 'function' && response.functionCalls()?.length > 0) {
+  while (
+    response.functionCalls &&
+    typeof response.functionCalls === "function" &&
+    response.functionCalls()?.length > 0
+  ) {
     const calls = response.functionCalls();
     const resultados = [];
 
@@ -137,8 +181,8 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
       resultados.push({
         functionResponse: {
           name: call.name,
-          response: { result: resultado }
-        }
+          response: { result: resultado },
+        },
       });
     }
 
@@ -154,58 +198,75 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
 }
 
 // ── ESCUCHAR MENSAJES TELEGRAM ───────────────────────
-bot.on('message', async (msg) => {
+bot.on("message", async (msg) => {
   if (msg.chat.id.toString() !== OWNER_ID) return;
   const texto = msg.text;
   if (!texto) return;
 
   try {
-    await bot.sendChatAction(msg.chat.id, 'typing');
+    await bot.sendChatAction(msg.chat.id, "typing");
     const respuesta = await procesarMensaje(texto);
     await bot.sendMessage(msg.chat.id, respuesta);
   } catch (err) {
     console.error(err);
-    await bot.sendMessage(msg.chat.id, "❌ Ocurrió un error, intentá de nuevo.");
+    await bot.sendMessage(
+      msg.chat.id,
+      "❌ Ocurrió un error, intentá de nuevo.",
+    );
   }
 });
 
 // ── RESUMEN DIARIO ───────────────────────────────────
-cron.schedule('0 8 * * *', async () => {
-  try {
-    const r = await sheets("listar", { dias: 7 });
-    if (!r.ok) return;
+cron.schedule(
+  "0 8 * * *",
+  async () => {
+    try {
+      const r = await sheets("listar", { dias: 7 });
+      if (!r.ok) return;
 
-    if (!r.eventos || r.eventos.length === 0) {
-      await bot.sendMessage(OWNER_ID, "☀️ *Buenos días!*\n\nNo tenés nada agendado para los próximos 7 días. Día libre! 🎉", { parse_mode: 'Markdown' });
-      return;
+      if (!r.eventos || r.eventos.length === 0) {
+        await bot.sendMessage(
+          OWNER_ID,
+          "☀️ *Buenos días!*\n\nNo tenés nada agendado para los próximos 7 días. Día libre! 🎉",
+          { parse_mode: "Markdown" },
+        );
+        return;
+      }
+
+      const lista = r.eventos
+        .map((e) => {
+          const fecha = e.fechaHora
+            ? new Date(e.fechaHora).toLocaleString("es-AR")
+            : "Sin fecha";
+          const icono = e.tipo === "tarea" ? "📌" : "📅";
+          return `${icono} ${e.descripcion} — ${fecha}`;
+        })
+        .join("\n");
+
+      await bot.sendMessage(
+        OWNER_ID,
+        `☀️ *Buenos días Maribel!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) {
+      console.error("Error resumen diario:", err);
     }
-
-    const lista = r.eventos.map(e => {
-      const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
-      const icono = e.tipo === "tarea" ? "📌" : "📅";
-      return `${icono} ${e.descripcion} — ${fecha}`;
-    }).join('\n');
-
-    await bot.sendMessage(OWNER_ID,
-      `☀️ *Buenos días Maribel!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch (err) {
-    console.error("Error resumen diario:", err);
-  }
-}, { timezone: "America/Argentina/Cordoba" });
+  },
+  { timezone: "America/Argentina/Cordoba" },
+);
 
 // ── RECORDATORIOS CADA MINUTO ────────────────────────
-cron.schedule('* * * * *', async () => {
+cron.schedule("* * * * *", async () => {
   try {
     const r = await sheets("recordatorios");
     if (!r.ok || !r.pendientes || r.pendientes.length === 0) return;
 
     for (const evt of r.pendientes) {
-      const fecha = new Date(evt.fechaHora).toLocaleString('es-AR');
-      await bot.sendMessage(OWNER_ID,
+      const fecha = new Date(evt.fechaHora).toLocaleString("es-AR");
+      await bot.sendMessage(
+        OWNER_ID,
         `⏰ *Recordatorio!*\n\n${evt.descripcion}\n🕐 ${fecha}`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: "Markdown" },
       );
     }
   } catch (err) {
@@ -213,4 +274,4 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-console.log('🤖 Maribel bot iniciado!');
+console.log("🤖 Maribel bot iniciado!");

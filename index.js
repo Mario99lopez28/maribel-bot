@@ -1,5 +1,5 @@
-const TelegramBot = require('node-telegram-bot-api');
-const cron = require('node-cron');
+const TelegramBot = require("node-telegram-bot-api");
+const cron = require("node-cron");
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const SHEETS_URL = process.env.SHEETS_URL;
@@ -9,14 +9,18 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 // ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
   const params = new URLSearchParams();
-  params.append('accion', accion);
+  params.append("accion", accion);
   for (const key in datos) {
     params.append(key, datos[key]);
   }
   const url = `${SHEETS_URL}?${params.toString()}`;
   const res = await fetch(url);
   const text = await res.text();
-  try { return JSON.parse(text); } catch(e) { return { error: text }; }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return { error: text };
+  }
 }
 
 // ── EJECUTAR HERRAMIENTA ─────────────────────────────
@@ -25,7 +29,7 @@ async function ejecutarTool(nombre, args) {
     const r = await sheets("agregar", {
       descripcion: args.descripcion,
       fechaHora: args.fechaHora,
-      tipo: "evento"
+      tipo: "evento",
     });
     return r.ok ? `Evento guardado con ID ${r.id}` : `Error: ${r.error}`;
   }
@@ -34,19 +38,24 @@ async function ejecutarTool(nombre, args) {
     const r = await sheets("agregar", {
       descripcion: args.descripcion,
       fechaHora: args.fecha || "",
-      tipo: "tarea"
+      tipo: "tarea",
     });
     return r.ok ? `Tarea guardada con ID ${r.id}` : `Error: ${r.error}`;
   }
 
   if (nombre === "ver_agenda") {
     const r = await sheets("listar", { dias: args.dias || 7 });
-    if (!r.ok || !r.eventos || r.eventos.length === 0) return "No hay eventos ni tareas pendientes.";
-    return r.eventos.map(e => {
-      const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
-      const icono = e.tipo === "tarea" ? "📌" : "📅";
-      return `${icono} [${e.id}] ${e.descripcion} — ${fecha}`;
-    }).join('\n');
+    if (!r.ok || !r.eventos || r.eventos.length === 0)
+      return "No hay eventos ni tareas pendientes.";
+    return r.eventos
+      .map((e) => {
+        const fecha = e.fechaHora
+          ? new Date(e.fechaHora).toLocaleString("es-AR")
+          : "Sin fecha";
+        const icono = e.tipo === "tarea" ? "📌" : "📅";
+        return `${icono} [${e.id}] ${e.descripcion} — ${fecha}`;
+      })
+      .join("\n");
   }
 
   if (nombre === "completar_evento") {
@@ -67,12 +76,18 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
-          descripcion: { type: "string", description: "Descripción del evento" },
-          fechaHora: { type: "string", description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00" }
+          descripcion: {
+            type: "string",
+            description: "Descripción del evento",
+          },
+          fechaHora: {
+            type: "string",
+            description: "Fecha y hora ISO 8601, ej: 2026-06-15T10:00:00",
+          },
         },
-        required: ["descripcion", "fechaHora"]
-      }
-    }
+        required: ["descripcion", "fechaHora"],
+      },
+    },
   },
   {
     type: "function",
@@ -82,12 +97,15 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
-          descripcion: { type: "string", description: "Descripción de la tarea" },
-          fecha: { type: "string", description: "Fecha opcional YYYY-MM-DD" }
+          descripcion: {
+            type: "string",
+            description: "Descripción de la tarea",
+          },
+          fecha: { type: "string", description: "Fecha opcional YYYY-MM-DD" },
         },
-        required: ["descripcion"]
-      }
-    }
+        required: ["descripcion"],
+      },
+    },
   },
   {
     type: "function",
@@ -97,10 +115,13 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
-          dias: { type: "number", description: "Cuántos días hacia adelante, default 7" }
-        }
-      }
-    }
+          dias: {
+            type: "number",
+            description: "Cuántos días hacia adelante, default 7",
+          },
+        },
+      },
+    },
   },
   {
     type: "function",
@@ -110,12 +131,15 @@ const tools = [
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "ID del evento, ej: EVT-A1B2C3D4" }
+          id: {
+            type: "string",
+            description: "ID del evento, ej: EVT-A1B2C3D4",
+          },
         },
-        required: ["id"]
-      }
-    }
-  }
+        required: ["id"],
+      },
+    },
+  },
 ];
 
 // ── HISTORIAL ─────────────────────────────────────────
@@ -123,7 +147,9 @@ const historial = [];
 
 // ── PROCESAR MENSAJE CON DEEPSEEK ────────────────────
 async function procesarMensaje(texto) {
-  const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
+  const ahora = new Date().toLocaleString("es-AR", {
+    timeZone: "America/Argentina/Cordoba",
+  });
 
   historial.push({ role: "user", content: texto });
   if (historial.length > 20) historial.splice(0, 2);
@@ -135,9 +161,9 @@ async function procesarMensaje(texto) {
 Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
 Fecha y hora actual: ${ahora}.
 Cuando el usuario quiera agendar algo, usá las herramientas.
-Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
+Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`,
     },
-    ...historial
+    ...historial,
   ];
 
   while (true) {
@@ -145,17 +171,21 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${DEEPSEEK_API_KEY}`
+        Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
       },
       body: JSON.stringify({
         model: "deepseek-chat",
         messages,
         tools,
-        tool_choice: "auto"
-      })
+        tool_choice: "auto",
+      }),
     });
 
     const data = await res.json();
+    console.log("DeepSeek response:", JSON.stringify(data).substring(0, 300));
+    if (!data.choices || !data.choices[0]) {
+      throw new Error("DeepSeek error: " + JSON.stringify(data));
+    }
     const msg = data.choices[0].message;
     messages.push(msg);
 
@@ -170,65 +200,82 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
       messages.push({
         role: "tool",
         tool_call_id: call.id,
-        content: resultado
+        content: resultado,
       });
     }
   }
 }
 
 // ── ESCUCHAR MENSAJES TELEGRAM ───────────────────────
-bot.on('message', async (msg) => {
+bot.on("message", async (msg) => {
   if (msg.chat.id.toString() !== OWNER_ID) return;
   const texto = msg.text;
   if (!texto) return;
 
   try {
-    await bot.sendChatAction(msg.chat.id, 'typing');
+    await bot.sendChatAction(msg.chat.id, "typing");
     const respuesta = await procesarMensaje(texto);
     await bot.sendMessage(msg.chat.id, respuesta);
   } catch (err) {
     console.error(err);
-    await bot.sendMessage(msg.chat.id, "❌ Ocurrió un error, intentá de nuevo.");
+    await bot.sendMessage(
+      msg.chat.id,
+      "❌ Ocurrió un error, intentá de nuevo.",
+    );
   }
 });
 
 // ── RESUMEN DIARIO ───────────────────────────────────
-cron.schedule('0 8 * * *', async () => {
-  try {
-    const r = await sheets("listar", { dias: 7 });
-    if (!r.ok) return;
+cron.schedule(
+  "0 8 * * *",
+  async () => {
+    try {
+      const r = await sheets("listar", { dias: 7 });
+      if (!r.ok) return;
 
-    if (!r.eventos || r.eventos.length === 0) {
-      await bot.sendMessage(OWNER_ID, "☀️ *Buenos días!*\n\nNo tenés nada agendado para los próximos 7 días. Día libre! 🎉", { parse_mode: 'Markdown' });
-      return;
+      if (!r.eventos || r.eventos.length === 0) {
+        await bot.sendMessage(
+          OWNER_ID,
+          "☀️ *Buenos días!*\n\nNo tenés nada agendado para los próximos 7 días. Día libre! 🎉",
+          { parse_mode: "Markdown" },
+        );
+        return;
+      }
+
+      const lista = r.eventos
+        .map((e) => {
+          const fecha = e.fechaHora
+            ? new Date(e.fechaHora).toLocaleString("es-AR")
+            : "Sin fecha";
+          const icono = e.tipo === "tarea" ? "📌" : "📅";
+          return `${icono} ${e.descripcion} — ${fecha}`;
+        })
+        .join("\n");
+
+      await bot.sendMessage(
+        OWNER_ID,
+        `☀️ *Buenos días Maribel!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}`,
+        { parse_mode: "Markdown" },
+      );
+    } catch (err) {
+      console.error("Error resumen diario:", err);
     }
-
-    const lista = r.eventos.map(e => {
-      const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
-      const icono = e.tipo === "tarea" ? "📌" : "📅";
-      return `${icono} ${e.descripcion} — ${fecha}`;
-    }).join('\n');
-
-    await bot.sendMessage(OWNER_ID,
-      `☀️ *Buenos días Maribel!*\n\n*Tu agenda de los próximos 7 días:*\n\n${lista}`,
-      { parse_mode: 'Markdown' }
-    );
-  } catch (err) {
-    console.error("Error resumen diario:", err);
-  }
-}, { timezone: "America/Argentina/Cordoba" });
+  },
+  { timezone: "America/Argentina/Cordoba" },
+);
 
 // ── RECORDATORIOS CADA MINUTO ────────────────────────
-cron.schedule('* * * * *', async () => {
+cron.schedule("* * * * *", async () => {
   try {
     const r = await sheets("recordatorios");
     if (!r.ok || !r.pendientes || r.pendientes.length === 0) return;
 
     for (const evt of r.pendientes) {
-      const fecha = new Date(evt.fechaHora).toLocaleString('es-AR');
-      await bot.sendMessage(OWNER_ID,
+      const fecha = new Date(evt.fechaHora).toLocaleString("es-AR");
+      await bot.sendMessage(
+        OWNER_ID,
         `⏰ *Recordatorio!*\n\n${evt.descripcion}\n🕐 ${fecha}`,
-        { parse_mode: 'Markdown' }
+        { parse_mode: "Markdown" },
       );
     }
   } catch (err) {
@@ -236,4 +283,4 @@ cron.schedule('* * * * *', async () => {
   }
 });
 
-console.log('🤖 Maribel bot iniciado!');
+console.log("🤖 Maribel bot iniciado!");

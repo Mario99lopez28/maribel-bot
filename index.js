@@ -126,7 +126,7 @@ async function procesarMensaje(texto) {
   const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
 
   historial.push({ role: "user", content: texto });
-  if (historial.length > 20) historial.splice(0, 2);
+  if (historial.length > 6) historial.splice(0, 2);
 
   const messages = [
     {

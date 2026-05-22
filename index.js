@@ -6,23 +6,44 @@ const SHEETS_URL = process.env.SHEETS_URL;
 const OWNER_ID = process.env.OWNER_CHAT_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
+// ── VALIDAR VARIABLES DE ENTORNO ─────────────────────
+const vars = ['TELEGRAM_BOT_TOKEN', 'OWNER_CHAT_ID', 'GROQ_API_KEY', 'SHEETS_URL'];
+for (const v of vars) {
+  if (!process.env[v]) {
+    console.error(`❌ Falta variable de entorno: ${v}`);
+    process.exit(1);
+  }
+}
+
 // ── LLAMAR A GOOGLE SHEETS VIA GET ───────────────────
 async function sheets(accion, datos = {}) {
   try {
     const params = new URLSearchParams();
     params.append('accion', accion);
     for (const key in datos) {
-      if (datos[key] !== undefined && datos[key] !== null) {
+      if (datos[key] !== undefined && datos[key] !== null && datos[key] !== '') {
         params.append(key, String(datos[key]));
       }
     }
     const url = `${SHEETS_URL}?${params.toString()}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    console.log(`[Sheets] ${accion} → ${url}`);
+
+    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
     const text = await res.text();
-    try { return JSON.parse(text); }
-    catch(e) { return { error: 'Respuesta inválida de Sheets: ' + text.substring(0, 100) }; }
+    console.log(`[Sheets] Respuesta: ${text.substring(0, 300)}`);
+
+    try {
+      return JSON.parse(text);
+    } catch(e) {
+      // Google a veces devuelve HTML de login — detectarlo
+      if (text.includes('<!DOCTYPE') || text.includes('<html')) {
+        return { error: 'Sheets devolvió HTML — republicar el script como app web' };
+      }
+      return { error: 'JSON inválido: ' + text.substring(0, 100) };
+    }
   } catch(e) {
-    return { error: 'Error conectando a Sheets: ' + e.message };
+    console.error(`[Sheets] Error: ${e.message}`);
+    return { error: e.message };
   }
 }
 
@@ -89,15 +110,18 @@ const tools = [
 
 // ── EJECUTAR HERRAMIENTA ─────────────────────────────
 async function ejecutarTool(nombre, args) {
+  console.log(`[Tool] ${nombre}`, JSON.stringify(args));
   try {
     if (nombre === "agregar_evento") {
-      if (!args.descripcion || !args.fechaHora) return "Error: faltan datos del evento";
+      if (!args.descripcion) return "Error: falta la descripción";
+      if (!args.fechaHora) return "Error: falta la fecha y hora";
       const r = await sheets("agregar", {
         descripcion: args.descripcion,
         fechaHora: args.fechaHora,
         tipo: "evento"
       });
-      return r.ok ? `Evento guardado con ID ${r.id}` : `Error al guardar: ${r.error}`;
+      if (r.error) return `No pude guardar el evento: ${r.error}`;
+      return r.ok ? `✅ Evento guardado (ID: ${r.id})` : `Error: ${JSON.stringify(r)}`;
     }
 
     if (nombre === "agregar_tarea") {
@@ -107,13 +131,14 @@ async function ejecutarTool(nombre, args) {
         fechaHora: args.fecha || "",
         tipo: "tarea"
       });
-      return r.ok ? `Tarea guardada con ID ${r.id}` : `Error al guardar: ${r.error}`;
+      if (r.error) return `No pude guardar la tarea: ${r.error}`;
+      return r.ok ? `✅ Tarea guardada (ID: ${r.id})` : `Error: ${JSON.stringify(r)}`;
     }
 
     if (nombre === "ver_agenda") {
       const r = await sheets("listar", { dias: args.dias || 7 });
-      if (r.error) return `Error al listar: ${r.error}`;
-      if (!r.ok || !r.eventos || r.eventos.length === 0) return "No hay eventos ni tareas pendientes.";
+      if (r.error) return `Error al consultar agenda: ${r.error}`;
+      if (!r.ok || !r.eventos || r.eventos.length === 0) return "📭 No hay eventos ni tareas pendientes.";
       return r.eventos.map(e => {
         const fecha = e.fechaHora ? new Date(e.fechaHora).toLocaleString('es-AR') : "Sin fecha";
         const icono = e.tipo === "tarea" ? "📌" : "📅";
@@ -122,22 +147,24 @@ async function ejecutarTool(nombre, args) {
     }
 
     if (nombre === "completar_evento") {
-      if (!args.id) return "Error: falta el ID";
+      if (!args.id) return "Error: falta el ID del evento";
       const r = await sheets("completar", { id: args.id });
-      return r.ok ? "Marcado como completado ✅" : `Error: ${r.error}`;
+      if (r.error) return `Error: ${r.error}`;
+      return r.ok ? "✅ Marcado como completado" : `Error: ${JSON.stringify(r)}`;
     }
 
-    return "Herramienta no encontrada";
+    return `Herramienta desconocida: ${nombre}`;
   } catch(e) {
-    return `Error ejecutando herramienta: ${e.message}`;
+    console.error(`[Tool] Error en ${nombre}: ${e.message}`);
+    return `Error interno: ${e.message}`;
   }
 }
 
-// ── HISTORIAL (máx 4 mensajes para no exceder límite) ─
+// ── HISTORIAL ─────────────────────────────────────────
 const historial = [];
 const MAX_HISTORIAL = 4;
 
-// ── LLAMAR A GROQ CON REINTENTO ──────────────────────
+// ── LLAMAR A GROQ ────────────────────────────────────
 async function llamarGroq(messages) {
   for (let intento = 0; intento < 3; intento++) {
     try {
@@ -160,23 +187,30 @@ async function llamarGroq(messages) {
       const data = await res.json();
 
       if (data.error) {
-        // Si el mensaje es muy largo, limpiar historial y reintentar
-        if (data.error.message?.includes('reduce the length') && intento < 2) {
+        const msg = data.error.message || '';
+        console.error(`[Groq] Error: ${msg}`);
+        if (msg.includes('reduce the length') && intento < 2) {
+          console.log('[Groq] Limpiando historial y reintentando...');
           historial.splice(0, historial.length);
-          throw new Error('historial_limpiado');
+          await new Promise(r => setTimeout(r, 1000));
+          continue;
         }
-        throw new Error('Groq error: ' + data.error.message);
+        if (intento < 2) {
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        throw new Error(msg);
       }
 
-      if (!data.choices || !data.choices[0]) {
-        throw new Error('Respuesta inválida de Groq');
+      if (!data.choices?.[0]) {
+        throw new Error('Respuesta vacía de Groq');
       }
 
       return data.choices[0].message;
     } catch(e) {
-      if (e.message === 'historial_limpiado' && intento < 2) continue;
       if (intento < 2) {
-        await new Promise(r => setTimeout(r, 2000));
+        console.log(`[Groq] Reintento ${intento + 1}: ${e.message}`);
+        await new Promise(r => setTimeout(r, 3000));
         continue;
       }
       throw e;
@@ -187,6 +221,7 @@ async function llamarGroq(messages) {
 // ── PROCESAR MENSAJE ─────────────────────────────────
 async function procesarMensaje(texto) {
   const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
+  console.log(`[Bot] Mensaje recibido: "${texto}"`);
 
   historial.push({ role: "user", content: texto });
   while (historial.length > MAX_HISTORIAL) historial.splice(0, 2);
@@ -197,7 +232,7 @@ async function procesarMensaje(texto) {
       content: `Sos Maribel, una asistente personal simpática que habla en español rioplatense.
 Ayudás a gestionar la agenda: eventos con fecha/hora y tareas sin hora fija.
 Fecha y hora actual: ${ahora}.
-Cuando el usuario quiera agendar algo, usá las herramientas disponibles.
+Cuando el usuario quiera agendar algo, SIEMPRE usá las herramientas disponibles para guardar en la agenda.
 Si el usuario no especifica el año, asumir que es 2026.
 Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
     },
@@ -210,18 +245,18 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
     const msg = await llamarGroq(messages);
     messages.push(msg);
 
-    // Sin tool calls — respuesta final
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
-      historial.push({ role: "assistant", content: msg.content });
+      const respuesta = msg.content || "Listo!";
+      historial.push({ role: "assistant", content: respuesta });
       while (historial.length > MAX_HISTORIAL) historial.splice(0, 2);
-      return msg.content || "Listo!";
+      return respuesta;
     }
 
-    // Ejecutar tool calls
     for (const call of msg.tool_calls) {
       try {
         const args = JSON.parse(call.function.arguments);
         const resultado = await ejecutarTool(call.function.name, args);
+        console.log(`[Tool] Resultado: ${resultado}`);
         messages.push({
           role: "tool",
           tool_call_id: call.id,
@@ -242,7 +277,10 @@ Respondé siempre de forma concisa y amigable. Usá emojis con moderación.`
 
 // ── ESCUCHAR MENSAJES TELEGRAM ───────────────────────
 bot.on('message', async (msg) => {
-  if (msg.chat.id.toString() !== OWNER_ID) return;
+  if (msg.chat.id.toString() !== OWNER_ID) {
+    console.log(`[Bot] Mensaje ignorado de chat: ${msg.chat.id}`);
+    return;
+  }
   const texto = msg.text;
   if (!texto) return;
 
@@ -251,13 +289,19 @@ bot.on('message', async (msg) => {
     const respuesta = await procesarMensaje(texto);
     await bot.sendMessage(msg.chat.id, respuesta);
   } catch (err) {
-    console.error('Error procesando mensaje:', err.message);
+    console.error(`[Bot] Error: ${err.message}`);
     await bot.sendMessage(msg.chat.id, "❌ Ocurrió un error, intentá de nuevo en unos segundos.");
   }
 });
 
+bot.on('polling_error', (err) => {
+  if (err.code === 'ETELEGRAM' && err.message.includes('409')) return;
+  console.error(`[Telegram] Error: ${err.message}`);
+});
+
 // ── RESUMEN DIARIO A LAS 8AM ─────────────────────────
 cron.schedule('0 8 * * *', async () => {
+  console.log('[Cron] Enviando resumen diario...');
   try {
     const r = await sheets("listar", { dias: 7 });
     if (!r.ok) return;
@@ -278,7 +322,7 @@ cron.schedule('0 8 * * *', async () => {
       { parse_mode: 'Markdown' }
     );
   } catch (err) {
-    console.error("Error resumen diario:", err.message);
+    console.error(`[Cron] Error resumen: ${err.message}`);
   }
 }, { timezone: "America/Argentina/Cordoba" });
 
@@ -290,14 +334,24 @@ cron.schedule('* * * * *', async () => {
 
     for (const evt of r.pendientes) {
       const fecha = new Date(evt.fechaHora).toLocaleString('es-AR');
+      console.log(`[Cron] Enviando recordatorio: ${evt.descripcion}`);
       await bot.sendMessage(OWNER_ID,
         `⏰ *Recordatorio!*\n\n${evt.descripcion}\n🕐 ${fecha}`,
         { parse_mode: 'Markdown' }
       );
     }
   } catch (err) {
-    console.error("Error recordatorios:", err.message);
+    console.error(`[Cron] Error recordatorios: ${err.message}`);
   }
+});
+
+// ── MANEJO DE ERRORES GLOBALES ────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error(`[Fatal] ${err.message}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error(`[Rejection] ${reason}`);
 });
 
 console.log('🤖 Maribel bot iniciado!');

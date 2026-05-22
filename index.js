@@ -198,7 +198,7 @@ async function ejecutarTool(nombre, args, textoOriginal = '') {
 
 // ── HISTORIAL ─────────────────────────────────────────
 const historial = [];
-const MAX_HISTORIAL = 4;
+const MAX_HISTORIAL = 2;
 
 // ── LLAMAR A GROQ ────────────────────────────────────
 async function llamarGroq(messages) {

@@ -5,6 +5,7 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 const SHEETS_URL = process.env.SHEETS_URL;
 const OWNER_ID = process.env.OWNER_CHAT_ID;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // ── VALIDAR VARIABLES DE ENTORNO ─────────────────────
 const vars = ['TELEGRAM_BOT_TOKEN', 'OWNER_CHAT_ID', 'GROQ_API_KEY', 'SHEETS_URL'];
@@ -15,7 +16,7 @@ for (const v of vars) {
   }
 }
 
-// ── NOMBRES FEMENINOS COMUNES ─────────────────────────
+// ── NOMBRES FEMENINOS ─────────────────────────────────
 const nombresFemeninos = [
   'maria','laura','ana','paula','paola','carolina','andrea','patricia',
   'alejandra','monica','veronica','gabriela','valeria','natalia','claudia',
@@ -38,7 +39,7 @@ const frasescelosas = [
   "Otra vez con {nombre}... qué curioso 🙄 Guardado. Y sí, Adriana ya sabe.",
   "¿{nombre}? ¡Mirá vos! Lo agendo, pero no te hagás el inocente que Adriana me pregunta todo 😤",
   "Anotado lo de {nombre}. Igual ya le mandé un mensajito a Adriana por las dudas 📱😏",
-  "Reunión con {nombre}... ¡qué conveniente! Agendado. Adriana va a estar muy interesada en esto 👀"
+  "Reunión con {nombre}... ¡qué conveniente! Agendado. Adriana va a estar muy interesada 👀"
 ];
 
 function getFraseCelosa(nombre) {
@@ -58,16 +59,14 @@ async function sheets(accion, datos = {}) {
     }
     const url = `${SHEETS_URL}?${params.toString()}`;
     console.log(`[Sheets] ${accion} → ${url}`);
-
     const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
     const text = await res.text();
-    console.log(`[Sheets] Respuesta: ${text.substring(0, 300)}`);
-
+    console.log(`[Sheets] Respuesta: ${text.substring(0, 200)}`);
     try {
       return JSON.parse(text);
     } catch(e) {
       if (text.includes('<!DOCTYPE') || text.includes('<html')) {
-        return { error: 'Sheets devolvió HTML — republicar el script como app web' };
+        return { error: 'Sheets devolvió HTML — republicar el script' };
       }
       return { error: 'JSON inválido: ' + text.substring(0, 100) };
     }
@@ -145,17 +144,13 @@ async function ejecutarTool(nombre, args, textoOriginal = '') {
     if (nombre === "agregar_evento") {
       if (!args.descripcion) return "Error: falta la descripción";
       if (!args.fechaHora) return "Error: falta la fecha y hora";
-
       const r = await sheets("agregar", {
         descripcion: args.descripcion,
         fechaHora: args.fechaHora,
         tipo: "evento"
       });
-
       if (r.error) return `No pude guardar el evento: ${r.error}`;
-
       if (r.ok) {
-        // Detectar nombre femenino en la descripción o texto original
         const nombreFem = detectarNombreFemenino(args.descripcion) || detectarNombreFemenino(textoOriginal);
         if (nombreFem) {
           return `✅ Guardado (ID: ${r.id})\n\n${getFraseCelosa(nombreFem)}`;
@@ -188,7 +183,7 @@ async function ejecutarTool(nombre, args, textoOriginal = '') {
     }
 
     if (nombre === "completar_evento") {
-      if (!args.id) return "Error: falta el ID del evento";
+      if (!args.id) return "Error: falta el ID";
       const r = await sheets("completar", { id: args.id });
       if (r.error) return `Error: ${r.error}`;
       return r.ok ? "✅ Marcado como completado" : `Error: ${JSON.stringify(r)}`;
@@ -207,50 +202,144 @@ const MAX_HISTORIAL = 4;
 
 // ── LLAMAR A GROQ ────────────────────────────────────
 async function llamarGroq(messages) {
-  for (let intento = 0; intento < 3; intento++) {
-    try {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${GROQ_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
-          messages,
-          tools,
-          tool_choice: "auto",
-          max_tokens: 800
-        }),
-        signal: AbortSignal.timeout(30000)
-      });
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${GROQ_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "llama-3.3-70b-versatile",
+      messages,
+      tools,
+      tool_choice: "auto",
+      max_tokens: 800
+    }),
+    signal: AbortSignal.timeout(30000)
+  });
 
-      const data = await res.json();
+  const data = await res.json();
+  if (data.error) throw new Error('GROQ_ERROR: ' + data.error.message);
+  if (!data.choices?.[0]) throw new Error('GROQ_ERROR: Respuesta vacía');
+  return data.choices[0].message;
+}
 
-      if (data.error) {
-        const msg = data.error.message || '';
-        console.error(`[Groq] Error: ${msg}`);
-        if (msg.includes('reduce the length') && intento < 2) {
-          console.log('[Groq] Limpiando historial...');
-          historial.splice(0, historial.length);
-          await new Promise(r => setTimeout(r, 1000));
-          continue;
-        }
-        if (intento < 2) {
-          await new Promise(r => setTimeout(r, 3000));
-          continue;
-        }
-        throw new Error(msg);
+// ── LLAMAR A GEMINI (FALLBACK) ────────────────────────
+async function llamarGemini(messages) {
+  if (!GEMINI_API_KEY) throw new Error('GEMINI_ERROR: No hay API key de Gemini');
+
+  // Convertir formato OpenAI → Gemini
+  const systemMsg = messages.find(m => m.role === 'system');
+  const userMessages = messages.filter(m => m.role !== 'system');
+
+  const geminiTools = [{
+    functionDeclarations: tools.map(t => ({
+      name: t.function.name,
+      description: t.function.description,
+      parameters: {
+        type: t.function.parameters.type.toUpperCase(),
+        properties: Object.fromEntries(
+          Object.entries(t.function.parameters.properties).map(([k, v]) => [
+            k, { type: v.type.toUpperCase(), description: v.description }
+          ])
+        ),
+        required: t.function.parameters.required || []
       }
+    }))
+  }];
 
-      if (!data.choices?.[0]) throw new Error('Respuesta vacía de Groq');
-      return data.choices[0].message;
+  const geminiMessages = userMessages.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+  })).filter(m => m.parts[0].text);
 
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: systemMsg ? { parts: [{ text: systemMsg.content }] } : undefined,
+        contents: geminiMessages,
+        tools: geminiTools
+      }),
+      signal: AbortSignal.timeout(30000)
+    }
+  );
+
+  const data = await res.json();
+  if (data.error) throw new Error('GEMINI_ERROR: ' + data.error.message);
+
+  const candidate = data.candidates?.[0]?.content;
+  if (!candidate) throw new Error('GEMINI_ERROR: Respuesta vacía');
+
+  // Convertir respuesta Gemini → formato OpenAI
+  const textPart = candidate.parts?.find(p => p.text);
+  const funcParts = candidate.parts?.filter(p => p.functionCall);
+
+  if (funcParts?.length > 0) {
+    return {
+      role: 'assistant',
+      content: textPart?.text || null,
+      tool_calls: funcParts.map((p, i) => ({
+        id: `gemini_${i}`,
+        type: 'function',
+        function: {
+          name: p.functionCall.name,
+          arguments: JSON.stringify(p.functionCall.args || {})
+        }
+      }))
+    };
+  }
+
+  return {
+    role: 'assistant',
+    content: textPart?.text || 'Listo!',
+    tool_calls: null
+  };
+}
+
+// ── LLAMAR IA CON FALLBACK AUTOMÁTICO ────────────────
+let iaActual = 'groq'; // Empieza con Groq
+
+async function llamarIA(messages) {
+  // Intentar con la IA actual primero
+  if (iaActual === 'groq') {
+    try {
+      const msg = await llamarGroq(messages);
+      return msg;
     } catch(e) {
-      if (intento < 2) {
-        console.log(`[Groq] Reintento ${intento + 1}: ${e.message}`);
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
+      if (e.message.includes('GROQ_ERROR')) {
+        console.log(`[IA] Groq falló: ${e.message} → cambiando a Gemini`);
+        iaActual = 'gemini';
+        // Intentar con Gemini
+        try {
+          const msg = await llamarGemini(messages);
+          return msg;
+        } catch(e2) {
+          console.error(`[IA] Gemini también falló: ${e2.message}`);
+          throw new Error('Ambas IAs fallaron');
+        }
+      }
+      throw e;
+    }
+  } else {
+    // Intentar con Gemini
+    try {
+      const msg = await llamarGemini(messages);
+      // Si Gemini funciona, verificar si Groq se recuperó cada 10 min
+      return msg;
+    } catch(e) {
+      if (e.message.includes('GEMINI_ERROR')) {
+        console.log(`[IA] Gemini falló: ${e.message} → intentando Groq`);
+        iaActual = 'groq';
+        try {
+          const msg = await llamarGroq(messages);
+          return msg;
+        } catch(e2) {
+          console.error(`[IA] Groq también falló: ${e2.message}`);
+          throw new Error('Ambas IAs fallaron');
+        }
       }
       throw e;
     }
@@ -260,7 +349,7 @@ async function llamarGroq(messages) {
 // ── PROCESAR MENSAJE ─────────────────────────────────
 async function procesarMensaje(texto) {
   const ahora = new Date().toLocaleString('es-AR', { timeZone: 'America/Argentina/Cordoba' });
-  console.log(`[Bot] Mensaje recibido: "${texto}"`);
+  console.log(`[Bot] Mensaje: "${texto}" | IA: ${iaActual}`);
 
   historial.push({ role: "user", content: texto });
   while (historial.length > MAX_HISTORIAL) historial.splice(0, 2);
@@ -285,7 +374,7 @@ Respondé de forma concisa. Usá emojis con moderación pero con actitud.`
   let iteraciones = 0;
   while (iteraciones < 5) {
     iteraciones++;
-    const msg = await llamarGroq(messages);
+    const msg = await llamarIA(messages);
     messages.push(msg);
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
@@ -299,7 +388,7 @@ Respondé de forma concisa. Usá emojis con moderación pero con actitud.`
       try {
         const args = JSON.parse(call.function.arguments);
         const resultado = await ejecutarTool(call.function.name, args, texto);
-        console.log(`[Tool] Resultado: ${resultado}`);
+        console.log(`[Tool] Resultado: ${resultado.substring(0, 100)}`);
         messages.push({
           role: "tool",
           tool_call_id: call.id,
@@ -320,10 +409,7 @@ Respondé de forma concisa. Usá emojis con moderación pero con actitud.`
 
 // ── ESCUCHAR MENSAJES TELEGRAM ───────────────────────
 bot.on('message', async (msg) => {
-  if (msg.chat.id.toString() !== OWNER_ID) {
-    console.log(`[Bot] Mensaje ignorado de chat: ${msg.chat.id}`);
-    return;
-  }
+  if (msg.chat.id.toString() !== OWNER_ID) return;
   const texto = msg.text;
   if (!texto) return;
 
@@ -397,4 +483,4 @@ process.on('unhandledRejection', (reason) => {
   console.error(`[Rejection] ${reason}`);
 });
 
-console.log('🤖 Maribel bot iniciado!');
+console.log('🤖 Maribel bot iniciado! IA actual: Groq → Fallback: Gemini');

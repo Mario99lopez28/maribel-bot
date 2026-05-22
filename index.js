@@ -17,6 +17,24 @@ async function sheets(accion, datos = {}) {
       }
     }
     const url = `${SHEETS_URL}?${params.toString()}`;
+    console.log('Sheets URL:', url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const text = await res.text();
+    console.log('Sheets response:', text.substring(0, 200));
+    try { return JSON.parse(text); }
+    catch(e) { return { error: 'Respuesta inválida: ' + text.substring(0, 100) }; }
+  } catch(e) {
+    console.log('Sheets error:', e.message);
+    return { error: 'Error conectando a Sheets: ' + e.message };
+  }
+}
+    params.append('accion', accion);
+    for (const key in datos) {
+      if (datos[key] !== undefined && datos[key] !== null) {
+        params.append(key, String(datos[key]));
+      }
+    }
+    const url = `${SHEETS_URL}?${params.toString()}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
     const text = await res.text();
     try { return JSON.parse(text); }
